@@ -9,7 +9,7 @@ Sensori utilizzati:
 - Accelerometro
 - Lettore NFC
 
-Link a repo: https://github.com/Matteo484126/Esp32/tree/main
+<a href="https://github.com/Matteo484126/Esp32/tree/main">Link a repo</a>
 
 Licenza scelta: GPL (GNU General Public License).
 
