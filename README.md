@@ -5,7 +5,7 @@ Matteo Vitobello
 Il sistema è composto da vari sensori, collegati ad un ESP32 che comunicando tra loro, rendono possibile l'apertura e chisura di un cancello motorizzato.
 
 Sensori utilizzati:
-- Sensore IR
+- Sensore ultrasuoni
 - Accelerometro
 - Lettore NFC
 
