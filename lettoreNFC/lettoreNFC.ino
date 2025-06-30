@@ -9,10 +9,12 @@
 
 MPU6050 mpu6050(Wire);
 
-#define IR 4
+#define echo 32
+#define trigger 33
+#define ledSensore 14
 #define ledVerde 2
-#define ledRosso 15
-#define relay 35
+#define ledRosso 19
+#define relay 13
 
 // Numero di carte salvate
 const int NUM_CARTE = 4;
@@ -20,8 +22,10 @@ const int UID_LENGTH = 4;
 
 int erroriConsec = 0;
 
-//define acceleration values of 3 axes 
-int16_t ax,ay,az;
+float accX_offset = 0.0;
+int16_t ax;
+
+float segnale, distanza;
 
 uint8_t carteRiconosciute[NUM_CARTE][UID_LENGTH] = {
   {0xFD, 0x40, 0x46, 0x05},
@@ -35,18 +39,19 @@ Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
 void setup(void) {
   Serial.begin(115200);
-
-  pinMode(relay, OUTPUT);
-  pinMode(IR, INPUT);
-
-  // Inizializza un solo bus I2C
+  
+  configuraPin();
+  
+  // Inizializza bus I2C
   Wire.begin(SDA_PIN, SCL_PIN);
 
   mpu6050.begin();
   mpu6050.calcGyroOffsets(true);
 
-  Serial.println("Inizializzazione del lettore NFC (PN532)...");
+  Serial.println("Calibrazione asse X in corso... Tieni il sensore fermo.");
+  accX_offset = calibraAccX();
 
+  Serial.println("Inizializzazione del lettore NFC (PN532)...");
   nfc.begin();
 
   uint32_t versiondata = nfc.getFirmwareVersion();
@@ -55,25 +60,32 @@ void setup(void) {
     while (1);
   }
 
-  Serial.print("Trovato chip PN5");
-  Serial.println((versiondata >> 24) & 0xFF, HEX);
-  Serial.print("Firmware version: ");
-  Serial.print((versiondata >> 16) & 0xFF, DEC);
-  Serial.print('.');
-  Serial.println((versiondata >> 8) & 0xFF, DEC);
-
+  Serial.println("Trovato chip PN5");
   nfc.SAMConfig();
-
   Serial.println("In attesa di una carta NFC...");
 }
 
-void loop(void){ ///////////////////////Loop
+void configuraPin(){
+  pinMode(relay, OUTPUT);
+  pinMode(echo, INPUT);
+  pinMode(trigger, OUTPUT);
+  pinMode(ledSensore, OUTPUT);
+  pinMode(ledRosso, OUTPUT);
+  pinMode(ledVerde, OUTPUT);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////// loop
+void loop(void){ 
   uint8_t success;
   uint8_t uid[7];
   uint8_t uidLength;
 
+  if(inMovimento(accX_offset)){
+    blocca();
+  }
+
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-  
   if (success) {
     Serial.println("\nCarta NFC rilevata!");
     Serial.print("UID (lunghezza ");
@@ -86,17 +98,11 @@ void loop(void){ ///////////////////////Loop
     }
     Serial.println();
 
-    delay(2000); // Evita letture troppo rapide
+    delay(500);
 
-    if(digitalRead(IR) && inMovimento()){
-      blocca();
-      
-    } else if(digitalRead(IR)){
-      lampeggia();
-
-    } else {
-      bool accettata = false;
-      for (uint8_t i = 0; i < NUM_CARTE; i++) { //////////////////////////////////Lettura carta
+    bool accettata = false;
+    if (uidLength == UID_LENGTH) {
+      for (uint8_t i = 0; i < NUM_CARTE; i++) {
         bool match = true;
         for (uint8_t j = 0; j < UID_LENGTH; j++) {
           if (uid[j] != carteRiconosciute[i][j]) {
@@ -104,24 +110,29 @@ void loop(void){ ///////////////////////Loop
             break;
           }
         }
-
         if (match) {
           accettata = true;
           break;
-        } else {
-          accettata = false;
         }
       }
-
-      if (accettata) {
-        cartaAccettata();
+    }
+    if (accettata) {
+      if (ostacolo()) {
+        if (inMovimento(accX_offset)) {
+          blocca(); // cancello si sta muovendo, blocca subito
+        } else {
+          lampeggia(); // ostacolo ma cancello fermo, segnala
+          Serial.println("sto lampeggiando");
+        }
       } else {
-        cartaRifiutata();
+        cartaAccettata();
       }
-
-    }  
+    } else {
+      cartaRifiutata();
+    }
   }
 }
+
 
 void cartaRifiutata() {
   Serial.println("Carta Rifiutata!!");
@@ -129,7 +140,7 @@ void cartaRifiutata() {
 
   erroriConsec++;
   if (erroriConsec == 3) {
-      Serial.print("terzo errore riprovare tra 1 min");
+    Serial.print("terzo errore riprovare tra 1 min");
     delay(60000); // Attende un minuto dopo 3 errori consecutivi
   }
   delay(500);
@@ -157,9 +168,13 @@ void blocca() {
   delay(100);
 }
 
-boolean inMovimento() {
+boolean inMovimento(float accX_offset) {
   mpu6050.update();
-  return mpu6050.getRawAccX()!=0;
+  float accX_corrected = mpu6050.getAccX() - accX_offset;
+  Serial.print("Movimento: ");
+  Serial.println(accX_corrected);
+
+  return accX_corrected > 1 || accX_corrected < -1;
 }
 
 void lampeggia(){
@@ -171,4 +186,27 @@ void lampeggia(){
     delay(500);
     digitalWrite(ledRosso, LOW);
   }
+}
+
+bool ostacolo() {
+  digitalWrite(trigger, HIGH);  
+  delayMicroseconds(10); 
+  digitalWrite(trigger, LOW);
+  segnale = pulseIn(echo, HIGH, 30000);
+  distanza = segnale / 58.2;
+  Serial.print("Distanza: ");
+  Serial.println(distanza);
+  return distanza > 0 && distanza < 15;
+}
+
+
+float calibraAccX() {
+  float somma = 0;
+  const int N = 100;
+  for (int i = 0; i < N; i++) {
+    mpu6050.update();
+    somma += mpu6050.getAccX();
+    delay(10);
+  }
+  return somma / N;
 }
