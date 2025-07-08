@@ -21,8 +21,6 @@ NewPing sonar(trigger, echo, 200);
 MPU6050 mpu6050(Wire);
 Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
-
-
 int erroriConsec = 0;
 
 float accX_offset = 0.0;
@@ -38,7 +36,6 @@ uint8_t carteRiconosciute[NUM_CARTE][UID_LENGTH] = {
   {0x4D, 0x9A, 0xDA, 0x03},
   {0xA5, 0x8B, 0x44, 0x05}
 };
-
 
 void setup(void) {
   Serial.begin(115200);
