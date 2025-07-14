@@ -3,7 +3,6 @@
 #include <MPU6050_tockn.h>
 #include <NewPing.h>
 
-
 // Pin I2C
 #define SDA_PIN 21
 #define SCL_PIN 22
@@ -16,15 +15,23 @@
 #define ledRosso 25
 #define relay 15
 
+// Stato
+bool bloccato = false;
+
 // SENSORI
 NewPing sonar(trigger, echo, 200);
 MPU6050 mpu6050(Wire);
 Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
 int erroriConsec = 0;
-
 float accX_offset = 0.0;
 int16_t ax;
+
+// Variabili per il multi-core
+TaskHandle_t SonarTask;
+volatile int distanzaAttuale = 0;
+volatile bool nuovaLettura = false;
+SemaphoreHandle_t distanzaSemaphore;
 
 // Numero di carte salvate
 const int NUM_CARTE = 4;
@@ -63,6 +70,22 @@ void setup(void) {
   Serial.println("Trovato chip PN5");
   nfc.SAMConfig();
   Serial.println("In attesa di una carta NFC...");
+
+  // Crea semaforo per proteggere l'accesso alla variabile distanza
+  distanzaSemaphore = xSemaphoreCreateMutex();
+
+  // Crea task per il sonar sul core 0
+  xTaskCreatePinnedToCore(
+    taskSonar,        // Funzione del task
+    "SonarTask",      // Nome del task
+    2048,             // Stack size
+    NULL,             // Parametri del task
+    1,                // Priorità del task
+    &SonarTask,       // Handle del task
+    0                 // Core su cui eseguire (0 o 1)
+  );
+
+  Serial.println("Task sonar avviato sul core 0");
 }
 
 void configuraPin(){
@@ -74,38 +97,75 @@ void configuraPin(){
   pinMode(ledVerde, OUTPUT);
 }
 
+// Task dedicato alla lettura del sonar (eseguito sul core 0)
+void taskSonar(void *pvParameters) {
+  for(;;) {
+    digitalWrite(trigger, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigger, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigger, LOW);
+
+    long durata = pulseIn(echo, HIGH, 25000);
+    int distanza = durata * 0.034 / 2;
+
+    // Protezione thread-safe per aggiornare la distanza
+    if (xSemaphoreTake(distanzaSemaphore, portMAX_DELAY) == pdTRUE) {
+      distanzaAttuale = distanza;
+      nuovaLettura = true;
+      xSemaphoreGive(distanzaSemaphore);
+    }
+
+    Serial.print("Distanza: ");
+    Serial.println(distanza);
+    
+    // Lettura ogni 100ms per evitare interferenze
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+// Funzione thread-safe per leggere la distanza
+int leggiDistanza() {
+  int distanza = 0;
+  if (xSemaphoreTake(distanzaSemaphore, portMAX_DELAY) == pdTRUE) {
+    distanza = distanzaAttuale;
+    xSemaphoreGive(distanzaSemaphore);
+  }
+  return distanza;
+}
+
 void loop(void){ 
   uint8_t success;
   uint8_t uid[7];
   uint8_t uidLength;
   
+  if(!bloccato){
+    if(inMovimento(accX_offset) && ostacolo()){
+      blocca();
+    }
+  } else {
+    success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50);
+    if (success) {
+      stampaDatiCarta(uid, uidLength);
 
-  Serial.println("controllo se mi devo bloccare");
-  if(inMovimento(accX_offset) && ostacolo()){
-    blocca();
-  }
+      delay(700);
 
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 0);
-  if (success) {
-    stampaDatiCarta(uid, uidLength);
+      bool accettata = trovaCarta(uid, uidLength);
 
-    delay(700);
-
-    bool accettata = trovaCarta(uid, uidLength);
-
-    if (accettata) {
-      if (ostacolo()) {
-        if (inMovimento(accX_offset)) {
-          blocca(); // cancello si sta muovendo, blocca subito
+      if (accettata) {
+        if (ostacolo()) {
+          if (inMovimento(accX_offset)) {
+            blocca(); // cancello si sta muovendo --> blocca subito
+          } else {
+            lampeggia(); // rilevato ostacolo con cancello fermo --> segnala
+            //Serial.println("sto lampeggiando");
+          }
         } else {
-          lampeggia(); // ostacolo ma cancello fermo, segnala
-          Serial.println("sto lampeggiando");
+          cartaAccettata();
         }
       } else {
-        cartaAccettata();
+        cartaRifiutata();
       }
-    } else {
-      cartaRifiutata();
     }
   }
   delay(50);
@@ -126,6 +186,7 @@ void cartaRifiutata() {
 }
 
 void cartaAccettata() {
+  bloccato = false;
   Serial.println("carta accettata");
   erroriConsec = 0;
   digitalWrite(ledVerde, HIGH);
@@ -139,6 +200,7 @@ void cartaAccettata() {
 }
 
 void blocca() {
+  bloccato = true;
   digitalWrite(relay, HIGH);
   delay(100);
   digitalWrite(relay, LOW);
@@ -165,22 +227,11 @@ void lampeggia(){
   }
 }
 
+// Nuova funzione ostacolo che utilizza la lettura thread-safe
 bool ostacolo() {
-  digitalWrite(trigger, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigger, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigger, LOW);
-
-  long durata = pulseIn(echo, HIGH, 25000);
-  int distanza = durata * 0.034 / 2;
-
-  Serial.print("Distanza: ");
-  Serial.println(distanza);
-
+  int distanza = leggiDistanza();
   return distanza > 0 && distanza < 15;
 }
-
 
 void stampaDatiCarta(uint8_t uid[],  uint8_t uidLength){
     Serial.println("\nCarta NFC rilevata!");
@@ -225,4 +276,4 @@ float calibraAccX() {
     delay(10);
   }
   return somma / N;
-  }
+}
