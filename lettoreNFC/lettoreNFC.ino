@@ -90,6 +90,7 @@ void loop(void) {
   delay(50);
 }
 
+//controlla che nulla sia in mezzo al cancello, nel caso di un ostacolo blocca
 void controllaMovimentoEOstacolo() {
   if (!bloccato && inMovimento(accX_offset) && ostacolo()) {
     blocca();
@@ -130,6 +131,7 @@ void gestisciCartaAccettata() {
   }
 }
 
+// carta rifiutata dopo 3 errori di fila il sistema si blocca per 1 min
 void cartaRifiutata() {
   Serial.println("Carta Rifiutata!!");
   digitalWrite(ledRosso, HIGH);
@@ -144,28 +146,31 @@ void cartaRifiutata() {
   digitalWrite(ledRosso, LOW);
 }
 
+//quando la carta viene accettata fa aprire il cancello
 void cartaAccettata() {
   bloccato = false;
   Serial.println("carta accettata");
   erroriConsec = 0;
   digitalWrite(ledVerde, HIGH);
 
-  digitalWrite(relay, LOW);
-  delay(1000);
   digitalWrite(relay, HIGH);
-  delay(1000);
+  delay(100);
+  digitalWrite(relay, LOW);
+  delay(100);
 
   digitalWrite(ledVerde, LOW);
 }
 
+//blocca il cancello attivando il rele
 void blocca() {
   bloccato = true;
-  digitalWrite(relay, LOW);
-  delay(100);
   digitalWrite(relay, HIGH);
+  delay(100);
+  digitalWrite(relay, LOW);
   delay(100);
 }
 
+//controlla se il cancello si sta aprendo/chiudendo
 boolean inMovimento(float accX_offset) {
   mpu6050.update();
   float accX_corrected = mpu6050.getAccX() - accX_offset;
@@ -173,6 +178,7 @@ boolean inMovimento(float accX_offset) {
   return accX_corrected > 0.3 || accX_corrected < -0.3;
 }
 
+//lampeggio causato da un ostacolo
 void lampeggia() {
   for (int i = 0; i < 3; i++) {
     digitalWrite(ledVerde, HIGH);
@@ -225,6 +231,7 @@ void stampaDatiCarta(uint8_t uid[], uint8_t uidLength) {
   Serial.println();
 }
 
+//cerca carte nell'array
 bool trovaCarta(uint8_t uid[], uint8_t uidLength) {
   if (uidLength == UID_LENGTH) {
     for (uint8_t i = 0; i < NUM_CARTE; i++) {
@@ -245,6 +252,7 @@ bool trovaCarta(uint8_t uid[], uint8_t uidLength) {
   return false;
 }
 
+//calibrazione dell'acceleromtero
 float calibraAccX() {
   float somma = 0;
   const int N = 100;
