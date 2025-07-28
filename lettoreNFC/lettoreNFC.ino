@@ -3,6 +3,8 @@
 #include <MPU6050_tockn.h>
 #include <NewPing.h>
 #include "DHTesp.h"
+#include <Stepper.h>
+
 
 // Pin I2C
 #define SDA_PIN 21
@@ -11,13 +13,16 @@
 // Pin per vari sensori
 #define echo 32
 #define trigger 33
-#define ledSensore 14
 #define ledVerde 26
 #define ledRosso 25
 #define relay 15
-#define dhtPin 35 
+#define dhtPin 14
+#define dhtPower 35
 
 DHTesp dht;
+unsigned long ultimaLetturaDHT = 0;
+const unsigned long intervallo_lettura = 600000; // 10 minuti
+float temperatura = 20.0; // Valore di default
 
 // Stato
 bool bloccato = false;
@@ -78,17 +83,34 @@ void configuraPin() {
   pinMode(relay, OUTPUT);
   pinMode(echo, INPUT);
   pinMode(trigger, OUTPUT);
-  pinMode(ledSensore, OUTPUT);
   pinMode(ledRosso, OUTPUT);
   pinMode(ledVerde, OUTPUT);
+  pinMode(dhtPin, INPUT);
+  pinMode(dhtPower, OUTPUT);
 }
 
 
 void loop(void) {
+  leggiUmidita();
   controllaMovimentoEOstacolo();
   gestisciLetturaCartaNFC();
   delay(50);
 }
+
+void leggiUmidita(){
+  unsigned long tempo = millis();
+
+  if(tempo - ultimaLetturaDHT >= intervallo_lettura){
+    digitalWrite(dhtPower, HIGH);
+    temperatura = dht.getTemperature();
+
+    if(isnan(temperatura)){
+      temperatura = 20;
+    }
+  }
+  digitalWrite(dhtPower, LOW);
+}
+
 
 //controlla che nulla sia in mezzo al cancello, nel caso di un ostacolo blocca
 void controllaMovimentoEOstacolo() {
@@ -199,16 +221,9 @@ bool ostacolo() {
 
   long durata = pulseIn(echo, HIGH, 25000);
 
-  float temperatura = dht.getTemperature();
-  float distanza;
-
-  if (isnan(temperatura)) {
-    // distanza calcolata in condizioni standard 20°C
-    distanza = durata * 0.01715;
-  } else {
-    float vSuono = 331.4 + 0.6 * temperatura;
-    distanza = durata * vSuono / 20000.0;
-  }
+  float vSuono = 331.4 + 0.6 * temperatura;
+  float distanza = durata * vSuono / 20000.0;
+  
 
   Serial.print("Distanza: ");
   Serial.print(distanza);
@@ -251,6 +266,8 @@ bool trovaCarta(uint8_t uid[], uint8_t uidLength) {
   }
   return false;
 }
+
+
 
 //calibrazione dell'acceleromtero
 float calibraAccX() {
